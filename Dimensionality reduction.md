@@ -1,0 +1,271 @@
+# Dimensionality reduction
+
+## Introduction
+The datasets used in human ancient DNA analysis are often extremely multidimensional, often including data from thousands of individuals, 
+across hundreds of thousands (or millions!) of single nucleotide polymrphisms (SNPs) (Mallick et al. 2023). Even when choosing to summarise 
+this genome-wide information to single statistics of genetic similarity (e.g. with Outgroup F3), a similarity matrix across individuals 
+can become very large when comparing across hundreds of individuals. As the name implies, dimensionality reduction methods can reduce the number 
+of dimensions in the underlying data, while also aiming to minimise the loss of information. The two such methods we will focus are Principal Component Analysis (PCA) 
+and Multi-Dimensional Scaling (MDS). Both methods reveal structure within the dataset, and part of that structure is due to shared population history between individuals/populations. 
+
+When using either of these methods, we are essentially representing the data on a new set of orthogonal axes, with its origin in the center of the data. 
+In PCA we typically use the original data for this transformation (i.e. the genotype matrix), and attempt to find the axes that capture the most variation among the samples. 
+A covariance matrix (i.e. a similarity matrix) is often calculated and used as a useful intermediate step in PCA. 
+Instead, in MDS we start with a pairwise distance matrix (typically a matrix of 1-F3), and attempt to find a spatial representation that best captures the distances between points.
+
+The results of both of these methods are (usually) a 2 dimensional plot in which the distances between individual points roughly correlates to the genetic distance between these individuals. 
+Therefore, genetically similar individuals will be plotted close to one another, and further away from individuals that are more genetically dissimilar.
+
+### Missingness
+A recurring issue when analysing ancient DNA is the high degree of missing data (i.e. missingness). We often apply a minimum coverage filter to our datasets: 
+A generally accepted rule-of-thumb for the 1240K dataset is a minimum of 10-15k covered SNPs (i.e. non-missing) SNPs. Another way to express this cutoff is to say that we are willing to 
+analyse data that is missing a genotype call in 98.8% of all SNPs in the dataset. 
+
+Missingness does not affect MDS as adversely as it does PCA, on account of the use of a pairwise distance 
+matrix of 1-F3. This matrix will only have missing values in cases where there is no overlapping coverage between two individuals/populations used in an F3 statistic. 
+Instead, the issue with MDS is that all F3 statistics are treated as equally reliable, regardless of their associated error bar.
+
+Unlike MDS, PCA is severely affected by missing data. During the rescaling of the data around its own mean values, missing data is “filled-in” to the mean value (mean imputation). This can cause points 
+to shift towards the origin (0,0) by a distance relative to the degree of missingness. 
+
+### Projection
+Least Squares Projection (lsqproject) allow us to use PCA with ancient samples that have high degrees of missingness. In PCA, you use a subset of the dataset to calculate your axes of variation (usually present-day populations with good data quality), 
+and then apply the resulting transformation to additional data, thus projecting them onto those axes. The important detail is that the variation between projected individuals is not taken into account when deciding which the axes of maximal variation are. 
+Similarly, in MDS you project points to the MDS space based on their distances to the points that constructed the space, disregarding the distances of the projected points to one another.
+Projecting provides results that are not affected by mean imputation, and thus are not shifted towards the origin.
+
+### Shrinkage
+When projecting populations on axes of variation that do not capture all the variation of the projected populations, they will appear as if they have less variation than reality. 
+This translates to the points “shrinking” towards the origin slightly. Some ancient populations, such as Western Hunter-Gatherers (WHG) harboured far more genetic variation than is present within present-day West Eurasian populations, 
+much of their true variation is “hidden” when projecting them.
+
+Another kind of shrinkage (projection bias) arises when “samples used to calculate the PC axes 'stretch' the axes”. This problem is exacerbated in datasets where the number of markers far 
+exceeds the number of samples used for PC calculation. This is often the case in human population genomics. Projection bias can be a problem when trying to compare present-day populations to projected ancient populations.
+Shrinkage can be corrected by scaling the eigenvectors of the projected and/or non-projected individuals to bring them more in line with one another.
+
+## Compute PCA
+
+You will need to install eigensoft as a conda environment:
+```
+conda activate
+conda create -n eigensoft8 
+conda install bioconda::eigensoft #v8 if you want to compute ellipses
+conda activate eigensoft8
+```
+
+Compute PCA with smartpca (prepare the pop and ID lists):
+
+```
+conda activate eigensoft8
+
+in1=$1 #geno and snp files prefix
+in2=$2 #ind file name
+in3=$3 #list of (present-day) populations (pop labels) used to compute the PCA
+in4=$4 #list of ancient individuals (ID labels) used to compute ellipses (optional)
+
+smartpca -p <(echo "genotypename:	${in1}.geno
+snpname:	${in1}.snp
+indivname:	${in2}
+evecoutname:	${in1}.pca.ell.evec.txt
+evaloutname:	${in1}.pca.ell.eval.txt
+elloutname:     ${in1}.pca.ell.coord.txt
+poplistname:	${in3}
+numoutliter:     0
+hiprec:          YES
+lsqproject:	YES
+numthreads:	4
+shrinkmode:	YES
+numoutevec:	2
+elllistname:    ${in4}
+ellconf:      0.95") > ${in1}.pca.ell.out
+
+while read -r line; do
+    if [[ $line == sample:* ]]; then
+        sample=$(echo $line | awk '{print $2}')
+    elif [[ $line == ellcoords:* ]]; then
+        ellcoords=$(echo $line | awk '{print $2, $3, $4, $5, $6, $8}')
+        echo -e "$sample\t$ellcoords"
+    fi
+done < ${in1}.pca.ell.coord.txt > ${in1}.pca.ell.coord.R.txt
+```
+
+NOTE: When calculating ellipses only two PC are computed. If not calcualting ellipses, compute at least 10 PCs.
+More info: https://github.com/DReichLab/EIG/blob/master/POPGEN/README
+
+Plot using RStudio:
+
+```
+# Load libraries
+library(ggplot2)
+library(ggrepel)
+library(data.table)
+library(dplyr)
+library(plotly)
+library(gridExtra)
+library(tidyverse)
+library(stringr)
+library(ggalt)
+library(ggforce)
+library(cowplot)
+
+setwd("PATH/TO/YOUR/FOLDER")
+
+#####1.  PCA
+#1.1 Read files evec and eval
+evec <- "pca.ell.evec.edited.txt"
+
+eval <- "pca.ell.eval.txt"
+
+ell <- "pca.ell.coord.R.txt"
+
+data <- read.table(evec, col.names= c("sample", "PC1", "PC2","Pop")) #modify if more PCs were computed
+
+eval_2 <- read.table(eval)
+
+ell_coord <- read.table(ell, col.names = c("sample", "Mean_X", "Mean_Y", "major_axis", "minor_axis", "angle", "CI" ))
+
+# Calculate percentage variance explained by each principal component
+pct.varPC1 = paste("PC1 (",round(100*eval_2[1,]/sum(eval_2),2),"%)",sep="") ### paste (concatenate strings. concatenate vectors after converting to character)
+pct.varPC2 = paste("PC2 (",round(100*eval_2[2,]/sum(eval_2),2),"%)",sep="")
+pct.varPC1
+pct.varPC2
+
+#Merge with metadata (optional)
+
+#different variables that you may need for plotting and differenciating between pop groups (each project can have different variables)
+#The most important one would be "Class" where I usually label "PCA" as the Pops used for computing the PCs and "Projected" the ancient samples to project
+metadata = read.table("metadata.txt",col.names=c("Pop","Site","Location","Class", "BP", "Calendar", "MesoChro"))
+
+joined <- full_join(data, populations2, by=c("Pop"="Pop"))
+
+ell_coord2 <- full_join(ell_coord, populations2, by=c("sample"="Pop"))
+
+#encircle
+setDT(joined)
+meandf <- joined[ ,list(PC1mean=mean(PC1), PC2mean=mean(PC2)), by=Location]
+joined_complete <- merge(meandf,joined, by.x="Location", by.y ="Location", all.x = TRUE)
+
+#colours - example
+colors <- c("North" = "#a0c4ff", "Central"="#cfc6ff",
+            "South"="#caffbf","South_East"="#f6bc66")
+#shapes - example
+shapes <- c("Huichol"=0, "Lacandon"=1, "Mazatec"=2,"Nahua_Jalisco"=3, "Nahua_Trios"=13, "Seri"=5, "Tarahumara"=14, 
+            "Tojolabal"=7, "Totonac"=8, "Triqui"=19, "Tzotzil"=10, "Zapotec_South"=11)
+
+ggplot() + 
+  geom_point(data = joined_complete[joined_complete$Class=="PCA",], aes(PC1, PC2, color=Location, shape=Site),size=2.5) +
+  geom_encircle(data = joined_complete[joined_complete$Class=="PCA",], aes(PC1, PC2, fill=Location), s_shape=1, expand=0, alpha=0.3, colour=NA) +
+  geom_ellipse(data = ell_coord2[ell_coord2$Class=="Projected",], aes(x0 = Mean_X, y0 = Mean_Y, a = minor_axis, b = major_axis, angle = angle), linetype = "dotted", color = "black") +
+  geom_point(data = joined_complete[joined_complete$Class=="Projected",], aes(PC1, PC2, fill=Site, shape = Site), size=3) +
+  scale_colour_manual(values = colors) +
+  scale_fill_manual(values = colors) +
+  scale_shape_manual(values = shapes) +
+  theme_bw() + theme(panel.grid.minor = element_blank(),panel.grid.major = element_blank()) + 
+  labs(title = "PCA",
+       x = pct.varPC1,
+       y = pct.varPC2)
+```
+
+## Compute MDS
+
+Modify your .ind file to have the third column the individual ID instead of the pop label:
+
+```
+awk '{print $1,$2,$1}' file.pop.ind > file.ID.ind
+```
+
+Prepare your poplist with Mbuti (African pop) as outgroup:
+```
+$ID=$(awk '{print $1}' file.ID.ind | sort | uniq | grep "PT_") #The grep command is an example as all the IDs I want to compute the MDS start with "PT_", modify accordingly
+for i in $ID; do for j in $ID ; do echo "$i $j Mbuti.DG" >> poplist.mds.txt ; done ; done
+```
+
+Run F3:
+```
+in1=$1 #geno and snp files prefix
+in2=$2 #ind file with the ID label (file.ID.ind)
+in3=$3 #poplist (poplist.mds.txt)
+
+#run qp3
+qp3Pop -p <(echo "genotypename:        ${in1}.geno
+snpname:        ${in1}.snp
+indivname:      ${in2}
+popfilename: ${in3}") \
+> ${in3}.qp3Pop.out
+
+#print results for R pltting
+grep 'result:' ${in3}.qp3Pop.out | awk '{print $2, $3, $4, $5, $6, $7, $8, $9}' > ${in3}.qp3Pop.R.out
+```
+
+Plot using RStudio:
+```
+library(tidyverse)
+library(data.table)
+library(ggrepel)
+
+setwd("PATH/TO/YOUR/FOLDER")
+
+df=read.table("mds.R.qp3Pop.out",
+              col.names=c("PopA", "PopB", "PopC", "F3", "StdErr", "Z", "SNPs"))
+
+labs=read.table("file.pop.ind",
+                col.names=c("Ind","Sex","Pop"))
+labs=labs[order(labs[,1]),]
+
+#inverse f3 stat
+df <- df %>% mutate(inverse_F3=F3^-1) %>%
+  mutate(negF3=1-F3)
+
+#### MDS plot ####
+#extract cols for plot
+MDS_f3 <- select(df,PopA,PopB,negF3)
+MDS_f3 <- filter(MDS_f3, PopA!="MDB_24213", PopB!="MDB_24213") #optional to filter out individuals
+
+#pivot wide
+MDS <- pivot_wider(MDS_f3, names_from=PopA, values_from = negF3, values_fill = 0.0000)
+#remove sample names column
+MDS_matrix <- MDS[, -1]
+#format as matrix
+MDS_matrix <- dist(t(as.matrix(MDS_matrix)))
+
+# caluculate MDS
+mds1 <- cmdscale(MDS_matrix, k=2, eig=TRUE)
+
+#set output as dataframe
+mds_n <- as.data.frame(mds1[["points"]])
+setDT(mds_n, keep.rownames = TRUE)
+mds_n=mds_n[order(mds_n[,1]),]
+
+#merge with pop labels
+mds_labs <- full_join(mds_n,labs, by=c("rn"="Ind"))
+
+mds_labs$Pop <- factor(mds_labs$Pop, levels = c("MDB_N", "MDB_BA", "MDB_IA"))
+
+colors <- c( "MDB_N" = "#4A5F85", "MDB_BA" = "#FFDC97", "MDB_IA" = "#ED8A7A")
+
+#plot
+ggplot(mds_labs, aes(x=V1, y=V2, color = Pop)) +
+  geom_point(size=2) +
+  theme_light() +
+  geom_text_repel(data = mds_labs, aes(label=rn), segment.size  = 0.1) +
+  theme(panel.grid.major = element_blank(), #remove major gridline
+        panel.grid.minor = element_blank(),
+        axis.line=element_blank(),
+        axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks=element_blank(),
+        panel.background=element_blank(),
+        panel.border=element_blank(),
+        plot.background=element_blank(),
+        legend.position = "right") + 
+  geom_hline(yintercept = 0, color = "black", alpha=0.5, size=0.5) +
+  geom_vline(xintercept = 0, color = "black", alpha=0.5, size=0.5) +
+  scale_color_manual(values = colors, labels = ~ gsub("_", " ", .x)) +
+  labs(x="Dimension 1", y= "Dimension 2", color="Population", 
+       title = "Multidimensional Scaling Plot of 1-f3(Mbuti; Ind1, Ind2)")
+```
+
+
+
+
+
