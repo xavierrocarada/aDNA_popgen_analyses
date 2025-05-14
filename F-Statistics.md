@@ -212,7 +212,12 @@ NOTE: F4-statistics have been famously used to show that Neanderthals are more c
 statistic is significantly positive with a Z-score of 7.99, while the second one is insignificantly different from zero (Z=1.01).
 
 ### Computing F3-statistics
+Prepare the poplist following this order:
 
+```
+Pop1(PopD/PopW) Pop2(PopC/PopX) Pop3(PopB/PopY) Pop4(PopA/PopZ/Outgroup)
+```
+Run admixtools:
 ```
 conda activate admixtools
 
