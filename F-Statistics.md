@@ -30,7 +30,7 @@ site in the three populations A, B and C.
 It can be shown that if F3(A,B;C)  is negative, it provides unambiguous proof that population C is admixed between 
 populations A and B, as in the following phylogeny (taken from Figure 1 from (Patterson et al. 2012):
 
-FIGURE
+![Description of image](images/f3_phylogeny.png)
 
 Intuitively, an F3 statistics becomes negative if the allele frequency of the target population C is on average intermediate between the allele frequencies of A and B. 
 Consider as an extreme example a genomic site where α = 0, b = 1 and c = 0.5. Then we have (c−a)(c−b)=−0.25, which is negative. So if the entire statistics is negative, 
